@@ -1,0 +1,293 @@
+name: MANUAL CI - GCP-DEV1
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: read
+  security-events: write
+  id-token: write
+
+on:
+  push:
+    branches:
+      - gcp-dev1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy-dev1:
+    name: Build & Deploy to DEV1
+    runs-on: uhg-runner
+    environment: dev1
+
+    outputs:
+      branch: ${{ steps.date.outputs.branch }}
+      #docker_image: asia-docker.pkg.dev/${{ env.gcp_project }}/rtc/dev1/rtc-fi-group-consumer:${{ steps.date.outputs.image_tag }}
+      image_tag: ${{ steps.date.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get PRM Prisma Secrets
+        uses: uhg-pipelines/epl-prm/get-secret@v3
+        with:
+          prm-base-url: https://prm.optum.com
+          ignore-not-found: false
+          prm-secret-map: |
+            uhgrg-c2e5a1ae-0c96-40a2-99de-fc9cc4976911-ns/secret.v2/uhg-prod-twistcli-github-actions PRISMA-ACCESS-KEY-ID | PRISMA_ACCESS_KEY_ID;
+            uhgrg-c2e5a1ae-0c96-40a2-99de-fc9cc4976911-ns/secret.v2/uhg-prod-twistcli-github-actions PRISMA-SECRET-ACCESS-KEY | PRISMA_ACCESS_KEY;
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Cache Maven packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2
+
+      - name: Set environment for DEV1
+        id: get-topic-env
+        run: echo "selected-env=alpha" >> $GITHUB_OUTPUT
+
+      - name: Get current date
+        id: date
+        run: |
+          echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+          echo "image_tag=${GITHUB_REF#refs/heads/}_$(date +%Y-%m-%d_%H-%M)" >> $GITHUB_OUTPUT
+
+      - name: Get Artifactory Access Token (JFrog SaaS)
+        id: jf-saas-setup
+        uses: uhg-pipelines/epl-jf/saas-setup@v4
+        with:
+          jfrog-project-key: rtcapplications
+
+      - name: Set Repository and GCP Project
+        run: |
+          echo "repository=rtcapplications-docker-np-loc" >> $GITHUB_ENV
+          echo "gcp_project=my-gcp-project-id" >> $GITHUB_ENV  # <-- Replace with your actual GCP project ID
+
+      - name: Login to GCP Artifactory Docker registry
+        uses: docker/login-action@v3
+        with:
+          registry: asia-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_ARTIFACT_REGISTRY_KEY }}
+
+      - name: Set up Maven 3.9.0
+        uses: uhg-pipelines/setup-maven@v1.0.0
+        with:
+          maven-version: 3.9.0
+          base-download-url: https://centraluhg.jfrog.io/artifactory/glb-maven-central-rem/org/apache/maven/apache-maven
+          jfrog-token: ${{ steps.jf-saas-setup.outputs.access-token }}
+
+      - name: Set Environment Variables for JFrog
+        run: |
+          echo "JFROG_USERNAME=${{ steps.jf-saas-setup.outputs.oidc-subject }}" >> $GITHUB_ENV
+          echo "JFROG_PASSWORD=${{ steps.jf-saas-setup.outputs.access-token }}" >> $GITHUB_ENV
+
+      - name: Maven Build and Quality Scan
+        id: maven-build-scan-jfsaas
+        uses: uhg-pipelines/epl-maven/build-scan@v2
+        with:
+          jfrog-project-key: rtcapplications
+          jfrog-build-name: ${{ steps.jf-saas-setup.outputs.jfrog-build-name }}
+          jfrog-build-number: ${{ steps.jf-saas-setup.outputs.jfrog-build-number }}
+          jfrog-username: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+          jfrog-password: ${{ steps.jf-saas-setup.outputs.access-token }}
+          maven-command: clean verify -f "pom.xml" -B -V -e -Denvironment=${{ steps.get-topic-env.outputs.selected-env }}
+          maven-deploy: false
+          enable-sonar: false
+          jfrog-audit: false
+
+      - name: Docker Build, Scan, and Push (to GCP Artifactory)
+        env:
+          DOCKER_FULL_IMAGE_WITH_TAG: asia-docker.pkg.dev/${{ env.gcp_project }}/rtc/dev1/rtc-fi-group-consumer:${{ steps.date.outputs.image_tag }}
+        uses: uhg-pipelines/epl-docker/build-scan-push@v3
+        with:
+          ask-id: AIDE_0073688
+          jfrog-repository: ${{ env.repository }}
+          jfrog-project-key: rtcapplications
+          docker-tags: ${{ env.DOCKER_FULL_IMAGE_WITH_TAG }}
+          prisma-user: ${{ env.PRISMA_ACCESS_KEY_ID }}
+          prisma-password: ${{ env.PRISMA_ACCESS_KEY }}
+          prisma-url: https://us-east1.cloud.twistlock.com/us-2-158257717
+          xray-auth-method: token
+          xray-user: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+          xray-password: ${{ steps.jf-saas-setup.outputs.access-token }}
+          enable-prisma: true
+          enable-xray: true
+          score: 10.0
+          docker-push: true
+
+      - uses: azure/setup-kubectl@v3
+        with:
+          version: latest
+
+      - name: Set Kube Config and Deploy to DEV1
+        shell: bash
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          kubectl config set-context --current --namespace=rtc-dev1
+          kubectl set image deployment/rtc-fi-group-consumer rtc-fi-group-consumer=asia-docker.pkg.dev/${{ env.gcp_project }}/rtc/dev1/rtc-fi-group-consumer:${{ steps.date.outputs.image_tag }}
+          kubectl rollout status deployment/rtc-fi-group-consumer
+
+      # - name: Set up JDK 17
+      #   uses: actions/setup-java@v3
+      #   with:
+      #     java-version: "17"
+      #     distribution: "temurin"
+      # #Cache Dependencies: To speed up builds by caching dependencies like Maven.
+      # #It is used to store the Maven packages in the cache so that they can be reused in the future.
+      # #This action is used to speed up the build process by storing the Maven packages in the cache and reusing them in the future.
+      # - name: Cache Maven packages
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: ~/.m2
+      #     key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-m2
+      # - name: Get Topic Environment
+      #   id: get-topic-env
+      #   run: |
+      #     if [ "${{ inputs.environment }}" == "dev1" ]; then
+      #       echo "alpha"
+      #       echo "selected-env=alpha" >> "$GITHUB_OUTPUT"
+      #     elif [ "${{ inputs.environment }}" == "dev2" ]; then
+      #       echo "alpha"
+      #       echo "selected-env=alpha" >> "$GITHUB_OUTPUT"
+      #     elif [ "${{ inputs.environment }}" == "sit" ]; then
+      #       echo "master"
+      #       echo "selected-env=master" >> "$GITHUB_OUTPUT"
+      #     elif [ "${{ inputs.environment }}" == "stage" ]; then
+      #       echo "prod"
+      #       echo "selected-env=prod" >> "$GITHUB_OUTPUT"
+      #     elif [ "${{ inputs.environment }}" == "release" ]; then
+      #       echo "prod"
+      #       echo "selected-env=prod" >> "$GITHUB_OUTPUT"
+      #     else
+      #       echo "prod"
+      #       echo "selected-env=prod" >> "$GITHUB_OUTPUT"
+      #     fi
+      # - name: Get current date
+      #   id: date
+      #   run: |
+      #     echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+      #     echo "image_tag=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"_"$(date +%Y-%m-%d_%H-%M)" >> $GITHUB_OUTPUT
+      # #      - name: Login to Artifactory auth repo
+      # #        uses: docker/login-action@v2
+      # #        with:
+      # #          registry: https://optum-docker-auth-prod.repo1.uhc.com/
+      # #          username: ${{ secrets.REGISTRY_USER }}
+      # #          password: ${{ secrets.REGISTRY_TOKEN }}
+      # #      - name: Docker Build Scan And Push
+      # #        uses: optum-eeps/epl-actions/docker-build-push@v1
+      # #        with:
+      # #          docker-image: sensei-team/rtc/${{inputs.environment}}/rtc-fi-group-consumer
+      # #          docker-tag: ${{ steps.date.outputs.image_tag}}
+      # #          registry-token: ${{ secrets.REGISTRY_TOKEN }}
+      # #          registry-user: ${{ secrets.REGISTRY_USER }}
+      # #          score: 9.8
+      # #          enable-xray: true
+      # #          prisma-user: ${{ env.PRISMA_ACCESS_KEY_ID }}
+      # #          prisma-password: ${{ env.PRISMA_ACCESS_KEY }}
+      # #          prisma-url: https://us-east1.cloud.twistlock.com/us-2-158257717
+      # #          enable-prisma: true
+      # #          docker-push: true
+      # - name: Get Artifactory Access Token
+      #   id: jf-saas-setup
+      #   uses: uhg-pipelines/epl-jf/saas-setup@v4
+      #   with:
+      #     jfrog-project-key: rtcapplications
+      # - name: Set Repository Based on Environment
+      #   id: set-repo
+      #   run: |
+      #     if [[ "${{ inputs.environment }}" == "dev1" || "${{ inputs.environment }}" == "dev2" || "${{ inputs.environment }}" == "sit" ]]; then
+      #       echo "repository=rtcapplications-docker-np-loc" >> $GITHUB_ENV
+      #     else
+      #       echo "repository=rtcapplications-docker-release-loc" >> $GITHUB_ENV
+      #     fi
+      #     echo "Repository set to: ${{ env.repository }}"
+      # - name: Login to Artifactory Docker registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: https://edgeinternal1uhg.optum.com/
+      #     username: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+      #     password: ${{ steps.jf-saas-setup.outputs.access-token }}
+      # - name: Login to Artifactory Docker registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: https://centraluhg.jfrog.io/
+      #     username: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+      #     password: ${{ steps.jf-saas-setup.outputs.access-token }}
+      # - name: Set up Maven 3.8.6
+      #   uses: uhg-pipelines/setup-maven@v1.0.0
+      #   with:
+      #     maven-version: 3.9.0
+      #     base-download-url: https://centraluhg.jfrog.io/artifactory/glb-maven-central-rem/org/apache/maven/apache-maven
+      #     jfrog-token: ${{ steps.jf-saas-setup.outputs.access-token }}
+      # - name: Set Environment Variables
+      #   run: |
+      #     echo "JFROG_USERNAME=${{ steps.jf-saas-setup.outputs.oidc-subject }}" >> $GITHUB_ENV
+      #     echo "JFROG_PASSWORD=${{ steps.jf-saas-setup.outputs.access-token }}" >> $GITHUB_ENV
+      # - name: Maven Build and Quality Scan
+      #   id: maven-build-scan-jfsaas
+      #   uses: uhg-pipelines/epl-maven/build-scan@v2
+      #   with:
+      #     jfrog-project-key: rtcapplications
+      #     jfrog-build-name: ${{ steps.jf-saas-setup.outputs.jfrog-build-name }}
+      #     jfrog-build-number: ${{ steps.jf-saas-setup.outputs.jfrog-build-number }}
+      #     jfrog-username: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+      #     jfrog-password: ${{ steps.jf-saas-setup.outputs.access-token }}
+      #     maven-command: clean verify -f "pom.xml" -B -V -e -Denvironment=${{ steps.get-topic-env.outputs.selected-env }}
+      #     maven-deploy: false
+      #     enable-sonar: false
+      #     jfrog-audit: false
+      # - name: Docker Build Scan And Push
+      #   env:
+      #     DOCKER_FULL_IMAGE_WITH_TAG: centraluhg.jfrog.io/${{ env.repository }}/rtc/${{ inputs.environment }}/rtc-fi-group-consumer:${{ steps.date.outputs.image_tag }}
+      #   uses: uhg-pipelines/epl-docker/build-scan-push@v3
+      #   with:
+      #     ask-id: AIDE_0073688
+      #     jfrog-repository: ${{ env.repository }}
+      #     jfrog-project-key: rtcapplications
+      #     docker-tags: ${{ env.DOCKER_FULL_IMAGE_WITH_TAG }}
+      #     prisma-user: ${{ env.PRISMA_ACCESS_KEY_ID }}
+      #     prisma-password: ${{ env.PRISMA_ACCESS_KEY }}
+      #     prisma-url: https://us-east1.cloud.twistlock.com/us-2-158257717
+      #     xray-auth-method: token
+      #     xray-user: ${{ steps.jf-saas-setup.outputs.oidc-subject }}
+      #     xray-password: ${{ steps.jf-saas-setup.outputs.access-token }}
+      #     enable-prisma: true
+      #     enable-xray: true
+      #     score: 10.0
+      #     docker-push: true
+      # - uses: azure/setup-kubectl@v3
+      #   with:
+      #     version: latest
+      # - name: Set Kube Config
+      #   shell: bash
+      #   run: |
+      #     mkdir ~/.kube
+      #     pwd
+      #     if [ -n "${{ inputs.kube-config-file }}" ]; then
+      #       cp ${{ inputs.kube-config-file }} ~/.kube/config
+      #     elif [ -n "${{ inputs.kube-config }}" ]; then
+      #       echo "${{ inputs.kube-config }}" > ~/.kube/config
+      #     elif [ -n "${{ secrets.KUBECONFIG }}" ]; then
+      #       echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+      #     else
+      #     touch ~/.kube/config
+      #     export KUBECONFIG=~/.kube/config
+      #     curl -k https://github.optum.com/raw/HCC-Container-Platform/hcc-k8s-microsite/master/docs/documentation/certs/hcck8s_elr-ca.crt > cert.crt
+      #     fi
+      #     kubectl set image deployment/rtc-fi-group-consumer rtc-fi-group-consumer=edgeinternal1uhg.optum.com/${{ env.repository }}/rtc/${{ inputs.environment }}/rtc-fi-group-consumer:${{ steps.date.outputs.image_tag }}
