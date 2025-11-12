@@ -1,0 +1,21 @@
+# Output for Artifact Registry details
+
+output "registry_details" {
+  description = "Details of all created Artifact Registry repositories"
+  value = {
+    for name, repo in google_artifact_registry_repository.artifact_repository : name => {
+      repository_id   = repo.repository_id
+      location        = repo.location
+      format          = repo.format
+      description     = repo.description
+      url             = "https://${repo.location}-docker.pkg.dev/${repo.project}/${repo.repository_id}"
+      labels          = repo.labels
+      project         = repo.project
+    }
+  }
+}
+
+output "registry_names" {
+  description = "List of created repository names"
+  value       = [for repo in google_artifact_registry_repository.artifact_repository : repo.repository_id]
+}
