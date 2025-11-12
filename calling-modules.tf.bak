@@ -1,0 +1,82 @@
+module "registry" {
+  source = "./modules/artifact_registry"
+  count  = var.create_registry ? 1 : 0
+
+  project_id             = var.project_id
+  location_artifact      = var.location_artifact
+  repository_name        = var.repository_name
+  repository_format      = var.repository_format
+  repository_description = var.repository_description
+  ###labels###
+  environment            = var.environment
+  created_by             = var.created_by
+  project_label          = var.project_label
+  team                   = var.team
+  managed_by             = var.managed_by
+}
+
+
+module "gcs_bucket" {
+  source        = "./modules/gcs_bucket"
+  count         = var.create_bucket ? 1 : 0 
+
+  bucket_name   = var.bucket_name
+  location      = var.bucket_location
+  storage_class = var.bucket_storage_class
+  ###labels###
+  environment   = var.environment
+  aide_id       = var.aide_id
+  service_tier  = var.service_tier
+  created_by    = var.created_by
+  project_label = var.project_label
+  managed_by    = var.managed_by
+}
+
+
+module "gke_autopilot" {
+  source = "./modules/gke_autopilot"
+  count  = var.create_gke_cluster ? 1 : 0
+
+  project_id                    = var.project_id
+  cluster_name                  = var.cluster_name
+  region                        = var.cluster_region
+  network                       = var.network
+  subnetwork                    = var.subnetwork
+  secondary_range_name          = var.secondary_range_name
+  services_secondary_range_name = var.services_secondary_range_name
+  release_channel               = var.release_channel
+  deletion_protection           = var.deletion_protection
+  master_authorized_networks    = var.master_authorized_networks
+  ###labels###
+  environment                   = var.environment
+  created_by                    = var.created_by
+  project_label                 = var.project_label
+  team                          = var.team
+  managed_by                    = var.managed_by
+}
+
+
+module "namespace" {
+  source = "./modules/namespace"
+  count  = var.create_namespaces ? 1 : 0
+
+  project_id      = var.project_id
+  cluster_name    = var.cluster_name
+  cluster_region  = var.cluster_region
+  namespace_names = var.namespace_names
+  create_namespaces = var.create_namespaces
+  create_gke_cluster  = var.create_gke_cluster
+  namespaces        = var.namespaces
+
+  environment   = var.environment
+  project_label = var.project_label
+  team          = var.team
+  created_by    = var.created_by
+  managed_by    = var.managed_by
+
+  providers = {
+    kubernetes = kubernetes.gke
+  }
+
+  depends_on = [module.gke_autopilot]
+}
