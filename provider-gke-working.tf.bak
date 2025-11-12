@@ -1,0 +1,31 @@
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.23"
+    }
+  }
+}
+
+# ---------------------------------------
+# Google Provider
+# ---------------------------------------
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+
+# Fetch current GCP credentials info for generating access tokens
+data "google_client_config" "default" {}
+
+provider "kubernetes" {
+  alias = "gke"
+  host                   = try("https://${module.gke_autopilot.endpoint}", "")
+  token                  = try(data.google_client_config.default.access_token, "")
+  cluster_ca_certificate = try(base64decode(module.gke_autopilot.cluster_ca_certificate), "")
+}
