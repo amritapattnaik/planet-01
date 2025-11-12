@@ -1,0 +1,82 @@
+name: Terraform Workflow GKE (Dev)
+
+on:
+  push:
+    branches: [ dev ]  
+    
+  pull_request:
+    branches: [ dev ]  
+
+jobs: 
+  terraform:
+    runs-on: uhg-runner
+
+    env:
+      ENVIRONMENT: dev
+
+    steps:
+    # Checkout the code
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Set up Terraform
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.8.4 
+
+    # Authenticate to GCP
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.RTC_GCP_TERRAFORM_SAKEY_NP }}
+
+    # Initialize Terraform
+    - name: Terraform Init
+      run: terraform init -backend-config=backend-dev-sit.tfvars -reconfigure
+      # run: terraform init -reconfigure -backend-config=backend-dev-sit.tfvars
+      working-directory: ./
+
+    # Cache Terraform provider plugins AFTER init
+    - name: Cache Terraform Providers
+      uses: actions/cache@v3
+      with:
+        path: .terraform/providers
+        key: terraform-${{ runner.os }}-${{ hashFiles('**/*.tf') }}
+        restore-keys: |
+          terraform-${{ runner.os }}-
+
+    # Validate Terraform configuration
+    - name: Terraform Validate
+      run: terraform validate
+      working-directory: ./
+
+    # Format Terraform code
+    - name: Terraform Format
+      run: terraform fmt
+      working-directory: ./
+
+    # Refresh Terraform state
+    - name: Terraform Refresh
+      run: terraform refresh -var-file=configuration-dev-sit.tfvars -lock=false
+      working-directory: ./
+
+    # Run Terraform Plan
+    - name: Terraform Plan  
+      run: terraform plan -var-file=configuration-dev-sit.tfvars -lock=false
+      working-directory: ./
+    
+    # # Apply Terraform changes
+    # - name: Terraform Apply 
+    #   run: terraform apply -auto-approve -var-file=configuration-dev-sit.tfvars -lock=false
+    #   working-directory: ./ 
+
+    # Destroy Terraform changes
+    - name: Terraform Destroy
+      run: terraform destroy -auto-approve -var-file=configuration-dev-sit.tfvars -lock=false
+      working-directory: ./ 
+
+    # Optional: Output the Terraform state
+    - name: List Terraform State
+      run: terraform state list
+      working-directory: ./
