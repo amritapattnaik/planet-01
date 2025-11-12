@@ -1,0 +1,61 @@
+variable "project_id" {
+  description = "GCP Project ID"
+  type        = string
+}
+
+variable "cluster_name" {
+  description = "GKE cluster name"
+  type        = string
+}
+
+variable "cluster_region" {
+  description = "Cluster region"
+  type        = string
+}
+
+variable "namespace_names" {
+  description = "List of namespaces to create"
+  type        = list(string)
+}
+
+variable "namespaces" {
+  description = "List of namespace names"
+  type        = list(string)
+}
+
+# Common labels
+variable "environment" {
+  description = "Environment (dev/test/prod/nonprod)"
+  type        = string
+}
+
+variable "project_label" {
+  description = "Project label for tagging"
+  type        = string
+}
+
+variable "team" {
+  description = "Team label for tagging"
+  type        = string
+}
+
+variable "created_by" {
+  description = "Creator name"
+  type        = string
+}
+
+variable "managed_by" {
+  description = "Resource managed by (e.g., terraform)"
+  type        = string
+}
+
+variable "create_namespaces" {
+  type        = bool
+  default     = true
+  description = "Whether to create namespaces or not"
+}
+
+variable "create_gke_cluster" {
+  description = "Flag to indicate whether the GKE cluster is being created"
+  type        = bool
+}
