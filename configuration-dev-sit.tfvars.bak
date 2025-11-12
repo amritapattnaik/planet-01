@@ -1,0 +1,62 @@
+# ------- Common Variables values -------
+project_id                     = "tuevhqiq-f9hc-eemh-065s-6lhn2z"
+region                         = "us-central1"
+location                       = "us-central1-a"
+environment                    = "non-prod"
+created_by                     = "subodh_kumar"
+project_label                  = "rtc"
+team                           = "rtc_wipro_devops" 
+managed_by                     = "terraform" 
+
+# ------- Artifact Registry Variables values -------
+create_registry                = true
+
+location_artifact              = "us-central1"
+repository_name                = ["rtc-dev-sit-registry", "rtc-stg-rel-registry"]
+repository_format              = "DOCKER"
+repository_description         = "This is registry for rtc application"
+
+
+# ------- GCP Bucket Variables values ------
+create_bucket                  = false
+
+bucket_name                    = "rtcterraformbucketdemo"
+bucket_location                = "US"
+bucket_storage_class           = "STANDARD"
+aide_id                        = "aide_0073688"
+service_tier                   = "p3"
+
+
+# ------- GKE Autopilot Cluster Variables values ------
+create_gke_cluster             = true
+
+cluster_name                   = "rtc-dev-sit-autopilot"
+cluster_region                 = "us-central1"
+network                        = "projects/tuevhqiq-f9hc-eemh-065s-6lhn2z/global/networks/pcm-managed-vpc-rtc-gcp-np"
+subnetwork                     = "projects/tuevhqiq-f9hc-eemh-065s-6lhn2z/regions/us-central1/subnetworks/pcm-managed-subnet-rtc-gcp-dev-sit"
+secondary_range_name           = "gke-dev-sit-pods-range"
+services_secondary_range_name  = "gke-dev-sit-services-range"
+release_channel                = "REGULAR"
+deletion_protection            = false            
+
+master_authorized_networks     = [
+  gcp_public_cidrs_access_enabled = true
+  {
+    display_name = "Optum 1"
+    cidr_block   = "168.183.0.0/16"
+  },
+  {
+    display_name = "Optum 2"
+    cidr_block   = "149.111.0.0/16"
+  }
+]
+
+
+# ------- Namespace Variables -------
+create_namespaces = true
+
+namespace_names = [
+  "rtc-elr-dev1",
+  "rtc-elr-dev1",
+  "rtc-elr-sit"
+]
